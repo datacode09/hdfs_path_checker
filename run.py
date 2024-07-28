@@ -5,6 +5,7 @@ from pyspark.sql import SparkSession
 from py4j.java_gateway import java_import
 import smtplib
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 HDFS_PATHS = [
     'hdfs://prod-ns:8020/prod/01559/app/RIEQ/data.ide/ATOMDataFiles/Productivity/CAG5BR/Outputs/',
@@ -71,10 +72,12 @@ def send_email(subject, message):
     try:
         sender = "sender@example.com"
         recipients = ["recipient@example.com"]
-        msg = MIMEText(message)
+        msg = MIMEMultipart()
         msg['Subject'] = subject
         msg['From'] = sender
         msg['To'] = ", ".join(recipients)
+        
+        msg.attach(MIMEText(message, 'html'))
 
         with smtplib.SMTP('smtp.example.com') as server:
             server.login('user', 'password')
@@ -82,6 +85,18 @@ def send_email(subject, message):
             logging.info("Email sent successfully.")
     except Exception as e:
         logging.error(f"Error sending email: {e}")
+
+def generate_html_table(data):
+    html = '<table border="1">'
+    html += '<tr><th>HDFS Path</th><th>Status</th><th>Modified Files</th></tr>'
+    for row in data:
+        html += '<tr>'
+        html += f'<td>{row[0]}</td>'
+        html += f'<td>{row[1]}</td>'
+        html += f'<td>{row[2]}</td>'
+        html += '</tr>'
+    html += '</table>'
+    return html
 
 def main():
     try:
@@ -92,15 +107,29 @@ def main():
         start_time = datetime.combine(today, datetime.min.time()) + timedelta(hours=0) # 12:00 AM
         end_time = datetime.combine(today, datetime.min.time()) + timedelta(hours=6)  # 6:00 AM
 
+        paths_status = []
+        all_paths_modified = True
+
         for hdfs_path in HDFS_PATHS:
             modified_files = check_files_in_directory(hdfs_path, start_time, end_time, fs)
             if modified_files:
-                message = f"Modified files in {hdfs_path} between 12:00 AM and 6:00 AM: {modified_files}"
-                logging.info(message)
-                send_email(f"Files Modified in {hdfs_path}", message)
+                paths_status.append([hdfs_path, 'Modified', ', '.join(modified_files)])
             else:
-                logging.info(f"No files modified in {hdfs_path} between 12:00 AM and 6:00 AM.")
+                paths_status.append([hdfs_path, 'Not Modified', ''])
+                all_paths_modified = False
+
+        table = generate_html_table(paths_status)
         
+        if all_paths_modified:
+            subject = "✔️ [Success] All HDFS Paths Modified"
+            message = f"<p>All HDFS paths have been modified between 12:00 AM and 6:00 AM.</p>{table}"
+        else:
+            subject = "❌ [Failure] Some HDFS Paths Not Modified"
+            message = f"<p>Some HDFS paths have not been modified between 12:00 AM and 6:00 AM.</p>{table}"
+
+        logging.info(message)
+        send_email(subject, message)
+
         spark.stop()
     except Exception as e:
         logging.error(f"An error occurred in the main function: {e}")
