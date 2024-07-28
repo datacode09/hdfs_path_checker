@@ -12,9 +12,16 @@ HDFS_PATHS = [
     # Add more paths here as needed
 ]
 
-# Configure logging
+# Create logs directory if it doesn't exist
+script_dir = os.path.dirname(os.path.realpath(__file__))
+logs_dir = os.path.join(script_dir, 'logs')
+os.makedirs(logs_dir, exist_ok=True)
+
+# Configure logging with date-time stamp in log file name
+log_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S.log")
+log_filepath = os.path.join(logs_dir, log_filename)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', 
-                    handlers=[logging.FileHandler("hdfs_path_checker.log"), logging.StreamHandler()])
+                    handlers=[logging.FileHandler(log_filepath), logging.StreamHandler()])
 
 def create_spark_session():
     try:
