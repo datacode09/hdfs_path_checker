@@ -1,11 +1,13 @@
 import os
 import logging
+import subprocess
 from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
 import re
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import traceback
 
 HDFS_PATHS = [
     'hdfs://prod-ns:8020/prod/01559/app/RIEQ/data.ide/ATOMDataFiles/Productivity/CAG5BR/Outputs/',
@@ -24,73 +26,92 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
                     handlers=[logging.FileHandler(log_filepath), logging.StreamHandler()])
 
 def create_spark_session():
+    logging.info("Starting function: create_spark_session")
     try:
         spark = SparkSession.builder.appName('HDFSCheckerApp').getOrCreate()
         logging.info("Spark session created successfully.")
         return spark
     except Exception as e:
-        logging.error(f"Error creating Spark session: {e}")
+        logging.exception("Error creating Spark session:")
         raise
+    finally:
+        logging.info("Ending function: create_spark_session")
 
 def extract_datetime_from_filename(file_name):
-    # Define possible datetime patterns
-    datetime_patterns = [
-        r'\d{8}_\d{6}',        # YYYYMMDD_HHMMSS
-        r'\d{8}T\d{6}',        # YYYYMMDDTHHMMSS (ISO 8601)
-        r'\d{8}',              # YYYYMMDD
-        r'\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
-        r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}', # YYYY-MM-DD_HH-MM-SS
-    ]
-    
-    for pattern in datetime_patterns:
-        match = re.search(pattern, file_name)
-        if match:
-            datetime_str = match.group()
-            try:
-                # Attempt to parse different datetime formats
-                if '_' in datetime_str:
-                    dt = datetime.strptime(datetime_str, '%Y%m%d_%H%M%S')
-                elif 'T' in datetime_str:
-                    dt = datetime.strptime(datetime_str, '%Y%m%dT%H%M%S')
-                elif '-' in datetime_str and '_' in datetime_str:
-                    dt = datetime.strptime(datetime_str, '%Y-%m-%d_%H-%M-%S')
-                elif '-' in datetime_str:
-                    dt = datetime.strptime(datetime_str, '%Y-%m-%d')
-                else:
-                    dt = datetime.strptime(datetime_str, '%Y%m%d')
-                return dt
-            except ValueError as e:
-                logging.warning(f"Failed to parse datetime from {datetime_str}: {e}")
-    
-    logging.info(f"No datetime found in filename: {file_name}")
-    return None
+    logging.info("Starting function: extract_datetime_from_filename")
+    try:
+        # Define possible datetime patterns
+        datetime_patterns = [
+            r'\d{8}_\d{6}',        # YYYYMMDD_HHMMSS
+            r'\d{8}T\d{6}',        # YYYYMMDDTHHMMSS (ISO 8601)
+            r'\d{8}',              # YYYYMMDD
+            r'\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
+            r'\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}', # YYYY-MM-DD_HH-MM-SS
+        ]
+        
+        for pattern in datetime_patterns:
+            match = re.search(pattern, file_name)
+            if match:
+                datetime_str = match.group()
+                try:
+                    # Attempt to parse different datetime formats
+                    if '_' in datetime_str:
+                        dt = datetime.strptime(datetime_str, '%Y%m%d_%H%M%S')
+                    elif 'T' in datetime_str:
+                        dt = datetime.strptime(datetime_str, '%Y%m%dT%H%M%S')
+                    elif '-' in datetime_str and '_' in datetime_str:
+                        dt = datetime.strptime(datetime_str, '%Y-%m-%d_%H-%M-%S')
+                    elif '-' in datetime_str:
+                        dt = datetime.strptime(datetime_str, '%Y-%m-%d')
+                    else:
+                        dt = datetime.strptime(datetime_str, '%Y%m%d')
+                    return dt
+                except ValueError as e:
+                    logging.warning(f"Failed to parse datetime from {datetime_str}: {e}")
+        
+        logging.info(f"No datetime found in filename: {file_name}")
+        return None
+    finally:
+        logging.info("Ending function: extract_datetime_from_filename")
 
 def get_parquet_row_count(spark, hdfs_file_path):
+    logging.info("Starting function: get_parquet_row_count")
     try:
         df = spark.read.parquet(hdfs_file_path)
         row_count = df.count()
+        logging.info(f"Row count for {hdfs_file_path}: {row_count}")
         return row_count
     except Exception as e:
-        logging.error(f"Error getting row count for {hdfs_file_path}: {e}")
+        logging.exception(f"Error getting row count for {hdfs_file_path}:")
         return None
+    finally:
+        logging.info("Ending function: get_parquet_row_count")
 
 def parse_hdfs_ls_output(spark, line):
-    parts = line.split()
-    modification_date = parts[5]
-    modification_time = parts[6]
-    file_path = parts[-1]
-    
-    modification_datetime = datetime.strptime(f"{modification_date} {modification_time}", "%Y-%m-%d %H:%M")
-    file_name = os.path.basename(file_path)
-    file_datetime = extract_datetime_from_filename(file_name)
-    row_count = get_parquet_row_count(spark, file_path)
-    
-    return modification_datetime, file_name, file_datetime, row_count
+    logging.info("Starting function: parse_hdfs_ls_output")
+    try:
+        parts = line.split()
+        modification_date = parts[5]
+        modification_time = parts[6]
+        file_path = parts[-1]
+        
+        modification_datetime = datetime.strptime(f"{modification_date} {modification_time}", "%Y-%m-%d %H:%M")
+        file_name = os.path.basename(file_path)
+        file_datetime = extract_datetime_from_filename(file_name)
+        row_count = get_parquet_row_count(spark, file_path)
+        
+        return modification_datetime, file_name, file_datetime, row_count
+    except Exception as e:
+        logging.exception(f"Error parsing HDFS ls output for line {line}:")
+        return None, None, None, None
+    finally:
+        logging.info("Ending function: parse_hdfs_ls_output")
 
 def check_files_in_directory(spark, hdfs_path, start_time, end_time):
+    logging.info(f"Starting function: check_files_in_directory for path {hdfs_path}")
     try:
         cmd = f'hdfs dfs -ls {hdfs_path}'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if result.returncode != 0:
             logging.error(f"Error running HDFS command: {result.stderr.strip()}")
             return []
@@ -100,7 +121,7 @@ def check_files_in_directory(spark, hdfs_path, start_time, end_time):
 
         for file_info in file_infos:
             is_modified, file_name, file_datetime, row_count = parse_hdfs_ls_output(spark, file_info)
-            if start_time <= is_modified <= end_time:
+            if is_modified and start_time <= is_modified <= end_time:
                 modified_files_info.append({
                     "file_name": file_name,
                     "file_datetime": file_datetime,
@@ -109,24 +130,31 @@ def check_files_in_directory(spark, hdfs_path, start_time, end_time):
 
         return modified_files_info
     except Exception as e:
-        logging.error(f"Error checking files in directory {hdfs_path}: {e}")
+        logging.exception(f"Error checking files in directory {hdfs_path}:")
         return []
+    finally:
+        logging.info(f"Ending function: check_files_in_directory for path {hdfs_path}")
 
 def generate_html_table(data):
-    html = '<table border="1">'
-    html += '<tr><th>HDFS Path</th><th>Status</th><th>Modified Files</th><th>Row Count</th></tr>'
-    for row in data:
-        html += '<tr>'
-        html += f'<td>{row[0]}</td>'
-        html += f'<td>{row[1]}</td>'
-        for file_info in row[2]:
-            html += f'<td>{file_info["file_name"]}</td>'
-            html += f'<td>{file_info["row_count"]}</td>'
-        html += '</tr>'
-    html += '</table>'
-    return html
+    logging.info("Starting function: generate_html_table")
+    try:
+        html = '<table border="1">'
+        html += '<tr><th>HDFS Path</th><th>Status</th><th>Modified Files</th><th>Row Count</th></tr>'
+        for row in data:
+            html += '<tr>'
+            html += f'<td>{row[0]}</td>'
+            html += f'<td>{row[1]}</td>'
+            for file_info in row[2]:
+                html += f'<td>{file_info["file_name"]}</td>'
+                html += f'<td>{file_info["row_count"]}</td>'
+            html += '</tr>'
+        html += '</table>'
+        return html
+    finally:
+        logging.info("Ending function: generate_html_table")
 
 def send_email(subject, message):
+    logging.info("Starting function: send_email")
     try:
         sender = "sender@example.com"
         recipients = ["recipient@example.com"]
@@ -142,9 +170,12 @@ def send_email(subject, message):
             server.sendmail(sender, recipients, msg.as_string())
             logging.info("Email sent successfully.")
     except Exception as e:
-        logging.error(f"Error sending email: {e}")
+        logging.exception("Error sending email:")
+    finally:
+        logging.info("Ending function: send_email")
 
 def main():
+    logging.info("Starting function: main")
     try:
         spark = create_spark_session()
 
@@ -176,7 +207,9 @@ def main():
         send_email(subject, message)
         spark.stop()
     except Exception as e:
-        logging.error(f"An error occurred in the main function: {e}")
+        logging.exception("An error occurred in the main function:")
+    finally:
+        logging.info("Ending function: main")
 
 if __name__ == "__main__":
     main()
