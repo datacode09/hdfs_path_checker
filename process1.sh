@@ -7,7 +7,7 @@ HDFS_PATHS=(
 )
 LOGS_DIR="./logs"
 LOG_FILE="${LOGS_DIR}/$(date +%Y-%m-%d_%H-%M-%S).log"
-REPORT_FILE="/tmp/hdfs_report.html"
+REPORT_FILE="$(pwd)/hdfs_report.html"  # Save the report in the current directory
 
 # Create logs directory if it doesn't exist
 mkdir -p "${LOGS_DIR}"
@@ -22,7 +22,7 @@ check_files_in_directory() {
     local hdfs_path=$1
     log "Starting function: check_files_in_directory for path ${hdfs_path}"
 
-    local cmd="hdfs dfs -ls ${hdfs_path} | awk -v today=\$(date +%Y-%m-%d) '\$6 == today && (\$7 >= \"00:00\" && \$7 < \"06:00\")'"
+    local cmd="hdfs dfs -ls ${hdfs_path} | awk -v today=\$(date +%Y-%m-%d) '\$6 == today && (\$7 >= \"00:00\" && \$7 < \"06:00\") {print \$8}'"
     eval "${cmd}" > /tmp/modified_files.txt
     local modified_files_count=$(wc -l < /tmp/modified_files.txt)
 
@@ -77,9 +77,10 @@ main() {
 
     local table=$(generate_html_table "${paths_status}")
 
-    # Save the HTML table to a file for later processing by the Python script
+    # Save the HTML table to a file in the run directory
     echo "${table}" > "${REPORT_FILE}"
 
+    log "HTML report saved to ${REPORT_FILE}"
     log "Ending function: main"
 }
 
