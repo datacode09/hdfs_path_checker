@@ -20,68 +20,40 @@ log() {
 # Function to check for files modified between 12:00 AM and 6:00 AM
 check_files_in_directory() {
     local hdfs_path=$1
-    log "Starting function: check_files_in_directory for path ${hdfs_path}"
+    log "Checking files in directory: ${hdfs_path}"
 
     local cmd="hdfs dfs -ls ${hdfs_path} | awk -v today=\$(date +%Y-%m-%d) '\$6 == today && (\$7 >= \"00:00\" && \$7 < \"06:00\") {print \$8}'"
     eval "${cmd}" > /tmp/modified_files.txt
-    local modified_files_count=$(wc -l < /tmp/modified_files.txt)
 
-    if [ "${modified_files_count}" -gt 0 ]; then
-        log "Found ${modified_files_count} modified files in ${hdfs_path}"
-        cat /tmp/modified_files.txt | tee -a "${LOG_FILE}"
-        echo "Modified"
+    if [ -s /tmp/modified_files.txt ]; then
+        echo "<h3>${hdfs_path}</h3>" >> "${REPORT_FILE}"
+        echo "<ul>" >> "${REPORT_FILE}"
+        while IFS= read -r file; do
+            echo "<li>${file}</li>" >> "${REPORT_FILE}"
+        done < /tmp/modified_files.txt
+        echo "</ul>" >> "${REPORT_FILE}"
+        log "Modified files found in ${hdfs_path}."
     else
-        log "No files modified between 12:00 AM and 6:00 AM in ${hdfs_path}"
-        echo "Not Modified"
+        log "No modified files found in ${hdfs_path}."
     fi
-}
-
-# Function to generate HTML table
-generate_html_table() {
-    local data="$1"
-    log "Starting function: generate_html_table"
-
-    local html="<table border=\"1\">"
-    html+="<tr><th>HDFS Path</th><th>Status</th><th>Modified Files</th></tr>"
-
-    while IFS= read -r line; do
-        local path=$(echo "$line" | cut -d '|' -f 1)
-        local status=$(echo "$line" | cut -d '|' -f 2)
-        local files=$(echo "$line" | cut -d '|' -f 3)
-
-        html+="<tr><td>${path}</td><td>${status}</td><td><pre>${files}</pre></td></tr>"
-    done <<< "$data"
-
-    html+="</table>"
-    echo "$html"
-    log "Ending function: generate_html_table"
 }
 
 # Main function
 main() {
-    log "Starting function: main"
+    log "Starting main function."
 
-    local paths_status=""
-    local all_paths_modified=true
+    # Start the HTML report
+    echo "<html><body>" > "${REPORT_FILE}"
 
     for hdfs_path in "${HDFS_PATHS[@]}"; do
-        local status=$(check_files_in_directory "${hdfs_path}")
-        local files=$(cat /tmp/modified_files.txt)
-
-        if [ "${status}" == "Not Modified" ]; then
-            all_paths_modified=false
-        fi
-
-        paths_status+="${hdfs_path}|${status}|${files}\n"
+        check_files_in_directory "${hdfs_path}"
     done
 
-    local table=$(generate_html_table "${paths_status}")
-
-    # Save the HTML table to a file in the run directory
-    echo "${table}" > "${REPORT_FILE}"
+    # Close the HTML report
+    echo "</body></html>" >> "${REPORT_FILE}"
 
     log "HTML report saved to ${REPORT_FILE}"
-    log "Ending function: main"
+    log "Ending main function."
 }
 
 # Run the main function
